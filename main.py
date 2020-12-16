@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument("--data_path", default="./data/WN18RR/", help="directory")
     parser.add_argument(
         "--output_folder",
-        default="./checkpoints/wn/out/",
+        default="./output",
         help="Folder name to save the models.",
     )
     parser.add_argument("--n_batch", type=int, default=100, help="")
@@ -139,8 +139,8 @@ def train_gcn(
     loss_pre = loss(
         args=args,
         triples=train_triples,
-        entity_embeddings=entity_embeddings.detach().numpy(),
-        relation_embeddings=relation_embeddings.detach().numpy(),
+        entity_embeddings=entity_embeddings.cpu().detach().numpy(),
+        relation_embeddings=relation_embeddings.cpu().detach().numpy(),
         loss_func=nn.MSELoss(),
     )
 
@@ -151,8 +151,8 @@ def train_gcn(
     loss_train = loss(
         args=args,
         triples=train_triples,
-        entity_embeddings=entity_embeddings_updated.detach().numpy(),
-        relation_embeddings=relation_embeddings.detach().numpy(),
+        entity_embeddings=entity_embeddings_updated.cpu().detach().numpy(),
+        relation_embeddings=relation_embeddings.cpu().detach().numpy(),
         loss_func=nn.MSELoss(),
     )  # 训练集损失值
     loss_train.backward()  # 反向求导
@@ -167,111 +167,6 @@ def train_gcn(
     )
 
     return model, entity_embeddings_updated.clone(), relation_embeddings
-
-
-# class ConvKB(nn.Module):
-#     def __init__(
-#         self,
-#         entity_embeddings: "Variable",
-#         relation_embeddings: "Variable",
-#         batch_size,
-#         batch_seq_size,
-#         n_hid,
-#         out_channels,
-#         kernel_size,
-#         convkb_drop_prob,
-#         lmbda,
-#     ):
-#         super(ConvKB, self).__init__()
-
-#         self.batch_size = batch_size
-#         self.batch_seq_size = batch_seq_size
-#         self.n_hid = n_hid
-#         self.out_channels = out_channels
-#         self.kernel_size = kernel_size
-#         self.convkb_drop_prob = convkb_drop_prob
-#         self.lmbda = lmbda
-#         self.batch_h = None
-#         self.batch_t = None
-#         self.batch_r = None
-#         self.batch_y = None
-
-#         self.ent_embeddings = nn.Embedding(entity_embeddings.shape[0], self.n_hid)
-#         self.ent_embeddings.weight.data = entity_embeddings
-#         self.rel_embeddings = nn.Embedding(relation_embeddings.shape[0], self.n_hid)
-#         self.rel_embeddings.weight.data = relation_embeddings
-
-#         self.conv1_bn = nn.BatchNorm2d(1)
-#         self.conv_layer = nn.Conv2d(
-#             1, out_channels, (kernel_size, 3)
-#         )  # kernel size x 3
-#         self.conv2_bn = nn.BatchNorm2d(out_channels)
-#         self.dropout = nn.Dropout(convkb_drop_prob)
-#         self.non_linearity = nn.ReLU()
-#         self.fc_layer = nn.Linear(
-#             (n_hid - kernel_size + 1) * out_channels, 1, bias=False
-#         )
-#         self.criterion = nn.Softplus()
-#         nn.init.xavier_uniform_(self.conv_layer.weight.data)
-#         nn.init.xavier_uniform_(self.fc_layer.weight.data)
-
-#     def get_positive_score(self, score):
-#         return score[0 : self.batch_size]
-
-#     def get_negative_score(self, score):
-#         return torch.mean(
-#             score[self.batch_size : self.batch_seq_size].view(-1, self.batch_size), 0
-#         )
-
-#     def _calc(self, h, r, t):
-#         h = h.unsqueeze(1)  # bs x 1 x dim
-#         r = r.unsqueeze(1)
-#         t = t.unsqueeze(1)
-
-#         conv_input = torch.cat([h, r, t], 1)  # bs x 3 x dim
-#         conv_input = conv_input.transpose(1, 2)
-#         # To make tensor of size 4, where second dim is for input channels
-#         conv_input = conv_input.unsqueeze(1)
-#         conv_input = self.conv1_bn(conv_input)
-#         out_conv = self.conv_layer(conv_input)
-#         out_conv = self.conv2_bn(out_conv)
-#         out_conv = self.non_linearity(out_conv)
-#         out_conv = out_conv.view(
-#             -1, (self.n_hid - self.kernel_size + 1) * self.out_channels
-#         )
-#         input_fc = self.dropout(out_conv)
-#         score = self.fc_layer(input_fc).view(-1)
-
-#         return -score
-
-#     def loss(self, score, lmbda, regul):
-#         return torch.mean(self.criterion(score * self.batch_y)) + self.lmbda * regul
-
-#     def forward(self):
-#         h = self.ent_embeddings(self.batch_h)
-#         r = self.rel_embeddings(self.batch_r)
-#         t = self.ent_embeddings(self.batch_t)
-#         score = self._calc(h, r, t)
-
-#         # regularization
-#         l2_reg = torch.mean(h ** 2) + torch.mean(t ** 2) + torch.mean(r ** 2)
-#         for W in self.conv_layer.parameters():
-#             l2_reg = l2_reg + W.norm(2)
-#         for W in self.fc_layer.parameters():
-#             l2_reg = l2_reg + W.norm(2)
-
-#         return self.loss(score, l2_reg)
-
-#     def predict(self):
-
-#         h = self.ent_embeddings(self.batch_h)
-#         r = self.rel_embeddings(self.batch_r)
-#         t = self.ent_embeddings(self.batch_t)
-#         score = self._calc(h, r, t)
-#         if CUDA:
-#             score = score.cuda()
-
-#         return score.data.numpy()
 
 
 def train_convkb(
@@ -327,12 +222,6 @@ if __name__ == "__main__":
 
     # random structure
     # print("Structure: ", model.get_structure())
-
-    # cuda
-    if CUDA:
-        model.cuda()
-        adj = adj.cuda()
-
     # Train model
     start_time = time.time()
     entity_embeddings = torch.FloatTensor(
@@ -341,6 +230,13 @@ if __name__ == "__main__":
     relation_embeddings = torch.FloatTensor(
         get_embeddings(relation2id, all_relation_embeddings, unique_relation_train)
     )  # init relation embeddings
+    
+    if CUDA:
+        model.cuda()
+        adj = adj.cuda()
+        entity_embeddings = entity_embeddings.cuda()
+        relation_embeddings = relation_embeddings.cuda()
+    
     for epoch in range(args.epochs_gcn):
         model, entity_embeddings, relation_embeddings = train_gcn(
             epoch=epoch,
@@ -362,6 +258,8 @@ if __name__ == "__main__":
         out_channels=args.out_channels,
         drop_prob=args.dropout,
     )
+    if CUDA:
+        model = model.cuda()
     train_convkb(
         epoch=epoch,
         args=args,
