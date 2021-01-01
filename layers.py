@@ -8,7 +8,7 @@ import math
 from torch.nn.parameter import Parameter
 
 CUDA = torch.cuda.is_available()
-
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
 class GraphConvolution(nn.Module):
 
@@ -72,12 +72,11 @@ class ConvKB(nn.Module):
     def __init__(self, input_dim, in_channels, out_channels, drop_prob):
         super().__init__()
 
-        self.conv_layer = nn.Conv2d(
-            in_channels, out_channels, (1, 3)
-        )  # kernel size -> 1*input_seq_length(i.e. 2)
+        self.conv_layer = nn.Conv2d(in_channels, out_channels, (1, 3))
         self.dropout = nn.Dropout(drop_prob)
         self.non_linearity = nn.ReLU()
-        self.fc_layer = nn.Linear((input_dim) * out_channels, 1)
+        self.fc_layer = nn.Linear((50 - 1 + 1) * out_channels, 1)
+        self.criterion = nn.Softplus()
 
         nn.init.xavier_uniform_(self.fc_layer.weight, gain=1.414)
         nn.init.xavier_uniform_(self.conv_layer.weight, gain=1.414)
@@ -118,7 +117,7 @@ class SpecialSpmmFunctionFinal(torch.autograd.Function):
             edge_sources = ctx.indices
 
             if CUDA:
-                edge_sources = edge_sources.cuda()
+                edge_sources = edge_sources.to(device)
 
             grad_values = grad_output[edge_sources]
             # grad_values = grad_values.view(ctx.E, ctx.outfeat)

@@ -8,7 +8,7 @@ from layers import SpGraphAttentionLayer, ConvKB, GraphConvolution
 import random
 
 CUDA = torch.cuda.is_available()  # checking cuda availability
-
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
 # class GCN(nn.Module):
 #     def __init__(self, n_feat, dropout):
@@ -282,10 +282,10 @@ class SpKBGATModified(nn.Module):
         )
 
         if CUDA:
-            edge_list = edge_list.cuda()
-            edge_type = edge_type.cuda()
-            edge_list_nhop = edge_list_nhop.cuda()
-            edge_type_nhop = edge_type_nhop.cuda()
+            edge_list = edge_list.to(device)
+            edge_type = edge_type.to(device)
+            edge_list_nhop = edge_list_nhop.to(device)
+            edge_type_nhop = edge_type_nhop.to(device)
 
         edge_embed = self.relation_embeddings[edge_type]
 
@@ -314,8 +314,8 @@ class SpKBGATModified(nn.Module):
         mask = torch.zeros(self.entity_embeddings.shape[0])
 
         if CUDA:
-            mask_indices = mask_indices.cuda()
-            mask = mask.cuda()
+            mask_indices = mask_indices.to(device)
+            mask = mask.to(device)
 
         mask[mask_indices] = 1.0
 

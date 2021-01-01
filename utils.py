@@ -22,6 +22,7 @@ import pickle
 
 
 CUDA = torch.cuda.is_available()
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
 
 def read_entity_from_id(filename="./data/WN18RR/entity2id.txt"):
@@ -317,7 +318,7 @@ def GAT_Loss(train_indices, valid_invalid_ratio):
 
     y = torch.ones(int(args.valid_invalid_ratio) * len_pos_triples)
     if CUDA:
-        y = y.cuda()
+        y = y.to(device)
 
     loss = gat_loss_func(pos_norm, neg_norm, y)
     return loss

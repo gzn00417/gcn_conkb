@@ -4,6 +4,7 @@ import numpy as np
 import random
 import argparse
 from copy import deepcopy
+import os
 
 import torch
 import torch.nn as nn
@@ -16,16 +17,18 @@ from models import *
 from create_batch import Corpus
 
 
+os.environ["CUDA_VISIBLE_DEVICES"] = '4'
 CUDA = torch.cuda.is_available()
+device = torch.device("cuda:4" if CUDA else "cpu")
+# torch.cuda.set_device(3)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--epochs_gcn", type=int, default=1, help="")
-    parser.add_argument("--epochs_convkb", type=int, default=1, help="")
+    parser.add_argument("--epochs_convkb", type=int, default=10, help="")
     parser.add_argument(
-        "--lr", type=float, default=0.0000001, help="Initial learning rate."
+        "--lr", type=float, default=0.0001, help="Initial learning rate."
     )
     parser.add_argument(
         "--weight_decay", type=float, default=5e-4, help="L2 loss on parameters."
@@ -48,7 +51,7 @@ def parse_args():
         default="./output",
         help="Folder name to save the models.",
     )
-    parser.add_argument("--n_batch", type=int, default=100, help="")
+    parser.add_argument("--n_batch", type=int, default=1, help="")
     parser.add_argument("--num_of_filters", type=int, default=64, help="")
     parser.add_argument("--kernel_size", default=1, type=int, help="")
     parser.add_argument("--lmbda", default=0.2, type=float, help="")
@@ -56,7 +59,7 @@ def parse_args():
         "-o",
         "--out_channels",
         type=int,
-        default=500,
+        default=50,
         help="Number of output channels in conv layer",
     )
     return parser.parse_args()
@@ -113,7 +116,7 @@ def loss(
 
     # y = -torch.ones(len_pos_triples, requires_grad=True)
     # if CUDA:
-    #     y = y.cuda()
+    #     y = y.to(device)
 
     # return loss_func(pos_norm, neg_norm, y)
 
@@ -169,11 +172,23 @@ def train_gcn(
     return model, entity_embeddings_updated.clone(), relation_embeddings
 
 
+def loss_conv(model, h, r, t, conv_output):
+    l2_reg = torch.mean(h ** 2) + torch.mean(t ** 2) + torch.mean(r ** 2)
+    
+    for W in model.conv_layer.parameters():
+        l2_reg = l2_reg + W.norm(2)
+    for W in model.fc_layer.parameters():
+        l2_reg = l2_reg + W.norm(2)
+
+    lmbda = 0.2
+    return torch.mean(model.criterion(conv_output.view(-1) * torch.ones(86835).to(device))) + lmbda * l2_reg
+
+
 def train_convkb(
     epoch, args, model, entity_embeddings, relation_embeddings, train_triples
 ):
 
-    margin_loss = torch.nn.SoftMarginLoss()
+    # margin_loss = torch.nn.SoftMarginLoss()
 
     start_time = time.time()
     print("Epoch: {:04d} --> ".format(epoch + 1))
@@ -181,17 +196,35 @@ def train_convkb(
     model.train()
     optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     optimizer.zero_grad()
+    
+    h = entity_embeddings[np.array(train_triples)[:, 0], :]
+    r = relation_embeddings[np.array(train_triples)[:, 1], :]
+    t = entity_embeddings[np.array(train_triples)[:, 2], :]
     conv_input = torch.cat(
         (
-            entity_embeddings[np.array(train_triples)[:, 0], :].unsqueeze(1),
-            relation_embeddings[np.array(train_triples)[:, 1], :].unsqueeze(1),
-            entity_embeddings[np.array(train_triples)[:, 2], :].unsqueeze(1),
+            h.unsqueeze(1),
+            r.unsqueeze(1),
+            t.unsqueeze(1),
         ),
         dim=1,
     )
+
+    print(entity_embeddings.shape)
+    print(relation_embeddings.shape)
+    print(h.shape, r.shape, t.shape)
+    print(conv_input.shape)
+
+    if hasattr(torch.cuda, 'empty_cache'):
+	    torch.cuda.empty_cache()
+
     conv_output = model(conv_input)
-    loss_train = margin_loss(conv_output.view(-1), entity_embeddings.view(-1))
-    loss_train.backward()
+
+    print(conv_output.shape)
+
+    # loss_train = margin_loss(conv_output, entity_embeddings.data)
+    loss_train = loss_conv(model, h, r, t, conv_output)
+
+    loss_train.backward(retain_graph=True)
     optimizer.step()
 
     end_time = time.time()
@@ -207,15 +240,13 @@ def train_convkb(
 if __name__ == "__main__":
     args = parse_args()
 
-    # 为CPU设置种子用于生成随机数，以使得结果是确定的
-    np.random.seed(args.seed)
-    torch.cuda.manual_seed(args.seed) if CUDA else torch.manual_seed(args.seed)
-
     # Load data
     # adj, features, labels, idx_train, idx_val, idx_test = load_cora_data()
     entity2id, relation2id, train_triples, train_adjacency_mat, unique_entities_train, unique_relation_train, validation_triples, valid_adjacency_mat, unique_entities_validation, unique_relation_validation, test_triples, test_adjacency_mat, unique_entities_test, unique_relation_test, all_entity_embeddings, all_relation_embeddings, adj = load_wn_data(
         # path="./data/NELL-995/", dataset="NELL-995"  # choose dataset
     )
+
+    # print(len(train_triples))
 
     # Init Model
     model = GCN(n_feat=args.hidden, dropout=args.dropout)
@@ -232,10 +263,10 @@ if __name__ == "__main__":
     )  # init relation embeddings
     
     if CUDA:
-        model.cuda()
-        adj = adj.cuda()
-        entity_embeddings = entity_embeddings.cuda()
-        relation_embeddings = relation_embeddings.cuda()
+        model.to(device)
+        adj = adj.to(device)
+        entity_embeddings = entity_embeddings.to(device)
+        relation_embeddings = relation_embeddings.to(device)
     
     for epoch in range(args.epochs_gcn):
         model, entity_embeddings, relation_embeddings = train_gcn(
@@ -255,17 +286,18 @@ if __name__ == "__main__":
     model = ConvKB(
         input_dim=args.hidden,
         in_channels=1,
-        out_channels=args.out_channels,
+        out_channels=3,
         drop_prob=args.dropout,
     )
     if CUDA:
-        model = model.cuda()
-    train_convkb(
-        epoch=epoch,
-        args=args,
-        model=model,
-        entity_embeddings=entity_embeddings,
-        relation_embeddings=relation_embeddings,
-        train_triples=train_triples,
-    )
+        model = model.to(device)
+    for epoch in range(args.epochs_convkb):
+        train_convkb(
+            epoch=epoch,
+            args=args,
+            model=model,
+            entity_embeddings=entity_embeddings,
+            relation_embeddings=relation_embeddings,
+            train_triples=train_triples,
+        )
 
